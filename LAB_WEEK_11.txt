@@ -1,0 +1,99 @@
+1. When a user takes a picture, that picture is stored in a path based on the given URI.
+   In which part of the code handles this?
+
+   Kode yang menangani penyimpanan file ke path berdasarkan URI ada di
+   fungsi insertToStore() di ProviderFileManager.kt:
+
+   private fun insertToStore(
+       fileInfo: FileInfo,
+       contentUri: Uri,
+       contentValues: ContentValues
+   ) {
+       executor.execute {
+           val insertedUri = contentResolver.insert(contentUri, contentValues)
+           insertedUri?.let { uri ->
+               val inputStream = contentResolver.openInputStream(fileInfo.uri)
+               val outputStream = contentResolver.openOutputStream(uri)
+               IOUtils.copy(inputStream, outputStream)
+           }
+       }
+   }
+
+   Di sini, contentResolver.insert(...) membuat entri baru di MediaStore
+   berdasarkan contentUri dan contentValues, lalu IOUtils.copy(...)
+   menyalin isi file dari fileInfo.uri ke lokasi yang dikelola MediaStore.
+
+
+2. In your FileInfo.kt, there are 5 attributes. On the first attribute,
+   what does the URI refer to? And on the fourth attribute, what does relativePath refer to?
+
+   data class FileInfo(
+       val uri: Uri,
+       val file: File,
+       val name: String,
+       val relativePath: String,
+       val mimeType: String
+   )
+
+   - URI (attribute pertama: uri):
+     URI di sini adalah alamat (content URI) yang digunakan sistem dan aplikasi
+     lain untuk mengakses file gambar/video yang dibuat. URI ini dihasilkan
+     oleh FileProvider (getUriFromFile) dan menunjuk ke lokasi file di
+     penyimpanan aplikasi sebelum disalin ke MediaStore.
+
+   - relativePath (attribute keempat: relativePath):
+     relativePath adalah path folder relatif di dalam penyimpanan eksternal
+     tempat MediaStore akan menyimpan file tersebut. Contohnya:
+     Environment.DIRECTORY_PICTURES atau Environment.DIRECTORY_MOVIES.
+     Nilai ini dipakai di ContentValues (RELATIVE_PATH) untuk menentukan
+     folder tujuan (misalnya “Pictures/” atau “Movies/”).
+
+
+3. [Bonus] Explain the chronological order from when a user takes a picture until the file is stored in the MediaStore.
+
+   Urutan kronologisnya:
+
+   a. User menekan tombol "Photo" (photo_button) di MainActivity.
+      - onClick listener dipanggil, isCapturingVideo = false.
+      - Fungsi checkStoragePermission(...) dipanggil untuk mengecek
+        WRITE_EXTERNAL_STORAGE (untuk Android 9 ke bawah).
+
+   b. Jika permission sudah/granted:
+      - checkStoragePermission memanggil openImageCapture().
+
+   c. Di openImageCapture():
+      - photoInfo = providerFileManager.generatePhotoUri(System.currentTimeMillis())
+        Fungsi ini membuat FileInfo berisi File dan URI untuk menyimpan foto
+        di folder aplikasi (getExternalFilesDir(Pictures)).
+      - Kemudian takePictureLauncher.launch(photoInfo.uri) dipanggil.
+        Kamera sistem dibuka dan hasil fotonya disimpan ke URI tersebut.
+
+   d. Setelah user selesai mengambil foto dan kamera menutup:
+      - Callback ActivityResultContracts.TakePicture() dijalankan:
+        takePictureLauncher = registerForActivityResult(... ) {
+            providerFileManager.insertImageToStore(photoInfo)
+        }
+        Di sini insertImageToStore(photoInfo) dipanggil.
+
+   e. Di insertImageToStore():
+      - Fungsi ini memanggil insertToStore(
+            fileInfo,
+            mediaContentHelper.getImageContentUri(),
+            mediaContentHelper.generateImageContentValues(fileInfo)
+        )
+        getImageContentUri() memberikan URI koleksi MediaStore Images,
+        sedangkan generateImageContentValues() mengisi nama file,
+        relativePath, dan MIME type.
+
+   f. Di insertToStore():
+      - contentResolver.insert(contentUri, contentValues) membuat entri baru
+        di MediaStore sesuai collection dan relativePath.
+      - insertedUri yang didapat digunakan untuk openOutputStream(...).
+      - Lalu IOUtils.copy(inputStream, outputStream) menyalin isi file dari
+        fileInfo.uri (lokasi awal di folder aplikasi) ke lokasi final
+        yang dikelola MediaStore (gallery / external storage).
+
+   g. Setelah proses copy selesai, file sekarang tersimpan di MediaStore
+      pada folder sesuai relativePath (misalnya Pictures atau Movies), dan
+      bisa diakses dari aplikasi Gallery atau aplikasi lain yang membaca
+      MediaStore.
